@@ -1,288 +1,231 @@
-var w = 800;
-var h = 400;
-var jugador;
-var fondo;
+// Constantes del juego
+const WIDTH = 400;
+const HEIGHT = 400;
+const FPS = 30;
+const PLAYER_SPEED = 300;
+const BALL_SPEED = 400;
+const PAUSE_TEXT = 'Pausa';
+const PAUSE_STYLE = { font: '20px Arial', fill: '#fff' };
 
-var bala, balaD = false, nave;
-var bala2, balaD2 = false, nave2;
+// Variables globales
+var player, background, ball, pauseLabel, menu;
+var cursors, trainingData = [];
+var isAutoMode = false, isTrainingComplete = false;
+var JX = 250, JY = 250;
+var stepIndex = 0; // Índice para reproducir movimientos en modo automático
 
+// Inicialización del juego Phaser
+var game = new Phaser.Game(WIDTH, HEIGHT, Phaser.CANVAS, '', {
+    preload: preload,
+    create: create,
+    update: update,
+    render: render
+});
 
-var salto;
-var menu;
-var avanza;
-
-var velocidadBala;
-var despBala;
-var estatusAire;
-var estatuSuelo;
-
-var velocidadBala2;
-var despBala2;
-
-
-var estatusDerecha;
-var estatusIzquierda;
-
-var nnNetwork, nnEntrenamiento, nnSalida, datosEntrenamiento = [];
-var modoAuto = false,
-    eCompleto = false;
-var juego = new Phaser.Game(w, h, Phaser.CANVAS, '', { preload: preload, create: create, update: update, render: render });
-
+// Precarga de assets del juego
 function preload() {
-    // Carga los recursos del juego
-    juego.load.image('fondo', 'assets/game/fondo.jpg');
-    juego.load.spritesheet('mono', 'assets/sprites/altair.png', 32, 48);
-    juego.load.image('nave', 'assets/game/ufo.png');
-    juego.load.image('bala', 'assets/sprites/purple_ball.png');
-    juego.load.image('menu', 'assets/game/menu.png');
+    game.load.image('background', 'assets/game/gwen.jpg');
+    game.load.spritesheet('player', 'assets/sprites/altair.png', 32, 48);
+    game.load.image('menu', 'assets/game/menu.png');
+    game.load.image('ball', 'assets/sprites/purple_ball.png');
 }
 
+// Inicialización de elementos del juego
 function create() {
-    // Inicialización del juego
-    juego.physics.startSystem(Phaser.Physics.ARCADE);
-    juego.physics.arcade.gravity.y = 800;
-    juego.time.desiredFps = 30;
-    fondo = juego.add.tileSprite(0, 0, w, h, 'fondo');
-    nave = juego.add.sprite(w - 100, h - 70, 'nave');
-    bala = juego.add.sprite(w - 100, h, 'bala');
-    nave2 = juego.add.sprite(w - 800, h - 400, 'nave');
-    bala2 = juego.add.sprite(w - 760, h - 380, 'bala');
+    // Inicialización de sistema de física
+    game.physics.startSystem(Phaser.Physics.ARCADE);
+    game.physics.arcade.gravity.y = 0; // No hay gravedad para el movimiento libre
+    game.time.desiredFps = FPS;
 
-    jugador = juego.add.sprite(50, h, 'mono');
-    juego.physics.enable(jugador);
-    jugador.body.collideWorldBounds = true;
-    var corre = jugador.animations.add('corre', [8, 9, 10, 11]);
-    jugador.animations.play('corre', 10, true);
-    juego.physics.enable(bala);
-    bala.body.collideWorldBounds = true;
-    juego.physics.enable(nave);
-    nave.body.collideWorldBounds = true;
-    juego.physics.enable(bala2);
-    bala2.body.collideWorldBounds = true;
+    // Creación del fondo y jugador
+    background = game.add.tileSprite(0, 0, WIDTH, HEIGHT, 'background');
+    player = game.add.sprite(WIDTH / 2, HEIGHT / 2, 'player');
+    game.physics.enable(player);
+    player.body.collideWorldBounds = true;
+    var run = player.animations.add('run', [8, 9, 10, 11]);
+    player.animations.play('run', 10, true);
 
-    pausaL = juego.add.text(w - 100, 20, 'Pausa', { font: '20px Arial', fill: '#fff' });
-    pausaL.inputEnabled = true;
-    pausaL.events.onInputUp.add(pausa, self);
-    juego.input.onDown.add(mPausa, self);
-    salto = juego.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR);
-    avanza = juego.input.keyboard.addKey(Phaser.Keyboard.RIGHT);
-    
-    nnNetwork = new synaptic.Architect.Perceptron(4, 5, 5, 5, 2);
+    // Creación de la bola
+    ball = game.add.sprite(0, 0, 'ball');
+    game.physics.enable(ball);
+    ball.body.collideWorldBounds = true;
+    ball.body.bounce.set(1);
+    setRandomBallVelocity();
 
-    nnEntrenamiento = new synaptic.Trainer(nnNetwork);
+    // Creación de etiqueta para pausa
+    pauseLabel = game.add.text(WIDTH - 100, 20, PAUSE_TEXT, PAUSE_STYLE);
+    pauseLabel.inputEnabled = true;
+    pauseLabel.events.onInputUp.add(pauseGame, this);
+    game.input.onDown.add(handlePauseClick, this);
+
+    // Captura de teclas de flecha
+    cursors = game.input.keyboard.createCursorKeys();
 }
 
-function enRedNeuronal() {
-    // Entrenamiento de la red neuronal
-    nnEntrenamiento.train(datosEntrenamiento, { rate: 0.0003, iterations: 10000, shuffle: true });
+// Establece una velocidad aleatoria para la bola
+function setRandomBallVelocity() {
+    var angle = game.rnd.angle();
+    ball.body.velocity.set(Math.cos(angle) * BALL_SPEED, Math.sin(angle) * BALL_SPEED);
 }
 
-function datosDeEntrenamiento(param_entrada) {
-    // Función para la red neuronal
-    nnSalida = nnNetwork.activate(param_entrada);
-    var aire = Math.round(nnSalida[0] * 100);
-    var piso = Math.round(nnSalida[1] * 100);
-    return nnSalida[0] >= nnSalida[1];
-}
-
-function pausa() {
-    // Función de pausa
-    juego.paused = true;
-    menu = juego.add.sprite(w / 2, h / 2, 'menu');
+// Pausa el juego y muestra el menú de pausa
+function pauseGame() {
+    game.paused = true;
+    menu = game.add.sprite(WIDTH / 2, HEIGHT / 2, 'menu');
     menu.anchor.setTo(0.5, 0.5);
 }
 
-function mPausa(event) {
-    // Manejo del menú de pausa
-    if (juego.paused) {
-        var menu_x1 = w / 2 - 270 / 2,
-            menu_x2 = w / 2 + 270 / 2,
-            menu_y1 = h / 2 - 180 / 2,
-            menu_y2 = h / 2 + 180 / 2;
-        var mouse_x = event.x,
-            mouse_y = event.y;
-        if (mouse_x > menu_x1 && mouse_x < menu_x2 && mouse_y > menu_y1 && mouse_y < menu_y2) {
-            if (mouse_x >= menu_x1 && mouse_x <= menu_x2 && mouse_y >= menu_y1 && mouse_y <= menu_y1 + 90) {
-                eCompleto = false;
-                datosEntrenamiento = [];
-                modoAuto = false;
-            } else if (mouse_x >= menu_x1 && mouse_x <= menu_x2 && mouse_y >= menu_y1 + 90 && mouse_y <= menu_y2) {
-                if (!eCompleto) {
-                    enRedNeuronal();
-                    eCompleto = true;
+// Maneja los clics en el menú de pausa
+function handlePauseClick(event) {
+    // Cálculo de límites del menú de pausa
+    if (game.paused) {
+        var menuBounds = {
+            x1: WIDTH / 2 - 270 / 2,
+            x2: WIDTH / 2 + 270 / 2,
+            y1: HEIGHT / 2 - 180 / 2,
+            y2: HEIGHT / 2 + 180 / 2
+        };
+
+        // Acciones basadas en la posición del clic
+        if (event.x > menuBounds.x1 && event.x < menuBounds.x2 && event.y > menuBounds.y1 && event.y < menuBounds.y2) {
+            if (event.y <= menuBounds.y1 + 90) {
+                resetTraining();
+            } else if (event.y > menuBounds.y1 + 90) {
+                if (trainingData.length > 0) {
+                    isTrainingComplete = true;
                 }
-                modoAuto = true;
+                isAutoMode = true;
+                stepIndex = 0; // Reiniciar el índice de reproducción
             }
-            resetVariables();
-            resetVariables2();
-            resetPlayer();
-            juego.paused = false;
             menu.destroy();
+            resetGame();
+            game.paused = false;
         }
     }
 }
 
-function resetVariables() {
-    // Reinicia las variables de la bala 1
-    bala.body.velocity.x = 0;
-    bala.position.x = w - 100;
-    balaD = false;
+// Reinicia los datos de entrenamiento
+function resetTraining() {
+    isTrainingComplete = false;
+    trainingData = [];
+    isAutoMode = false;
 }
 
-function resetVariables2() {
-    // Reinicia las variables de la bala 2
-    bala2.body.velocity.y = -270;
-    bala2.position.y = h - 400;
-    balaD2 = false;
+// Reinicia el estado del juego
+function resetGame() {
+    player.x = WIDTH / 2;
+    player.y = HEIGHT / 2;
+    player.body.velocity.x = 0;
+    player.body.velocity.y = 0;
+
+    ball.x = 0;
+    ball.y = 0;
+    setRandomBallVelocity();
 }
 
-
-
-function resetPlayer() {
-    // Reinicia la posición del jugador
-    jugador.position.x = 70;
-}
-
-function saltar() {
-    // Función para hacer saltar al jugador
-    jugador.body.velocity.y = -350;
-}
-
-function correr() {
-    // Función para hacer correr al jugador hacia adelante
-    jugador.body.velocity.x = 0;
-}
-
-function correrAtras() {
-    // Función para hacer correr al jugador hacia atrás
-    jugador.body.velocity.x = -120;
-}
-
-function Detenerse() {
-    // Función para detener al jugador
-    jugador.body.velocity.x = 0;
-}
-
+// Actualiza la lógica del juego en cada cuadro
 function update() {
-    
-    // Actualización del juego en cada fotograma
-    fondo.tilePosition.x -= 1;
+    background.tilePosition.x -= 1; // Mueve el fondo para crear efecto de desplazamiento
 
-    // Colisiones entre objetos
-    juego.physics.arcade.collide(nave, jugador, colisionH, null, this);
-    juego.physics.arcade.collide(bala, jugador, colisionH, null, this);
-    juego.physics.arcade.collide(bala2, jugador, colisionH, null, this);
+    if (!isAutoMode) {
+        handlePlayerInput();
+    } else if (isAutoMode) {
+        replayPlayerInput();
+    }
 
-    // Actualización del estado del jugador
-    estatuSuelo = 1;
-    estatusAire = 0;
-    estatusDerecha = 0;
-    estatusIzquierda = 1;
-    if (!jugador.body.onFloor() || jugador.body.velocity.y != 0) {
-        estatuSuelo = 0;
-        estatusAire = 1;
+    game.physics.arcade.collide(ball, player, handleCollision, null, this);
+
+    var dx = ball.x - player.x;
+    var dy = ball.y - player.y;
+    var distance = Math.sqrt(dx * dx + dy * dy); // Distancia euclidiana entre la bola y el jugador
+
+    if (!isAutoMode) {
+        storeTrainingData(dx, dy, distance);
     }
-    if (jugador.body.velocity.x >= 140) {
-        estatusDerecha = 1;
-        estatusIzquierda = 0;
+}
+
+// Maneja la entrada del jugador desde el teclado
+function handlePlayerInput() {
+    player.body.velocity.x = 0;
+    player.body.velocity.y = 0;
+
+    if (cursors.left.isDown) {
+        player.body.velocity.x = -PLAYER_SPEED;
+    } else if (cursors.right.isDown) {
+        player.body.velocity.x = PLAYER_SPEED;
     }
-    // Cálculo de desplazamientos de balas
-    despBala = Math.floor(jugador.position.x - bala.position.x);
-    despBala2 = Math.floor(jugador.position.x - bala2.position.x)
-    // Control de movimiento del jugador en modo manual
-    if (modoAuto == false && salto.isDown && !estatusAire) {
-        if (jugador.body.velocity.x <= 0) {
-            jugador.body.velocity.x = 150;
-            saltar();
-            correr();
-        } else {
-            saltar();
-            Detenerse();
+
+    if (cursors.up.isDown) {
+        player.body.velocity.y = -PLAYER_SPEED;
+    } else if (cursors.down.isDown) {
+        player.body.velocity.y = PLAYER_SPEED;
+    }
+}
+
+// Almacena los datos de entrenamiento para la red neuronal
+function storeTrainingData(dx, dy, distance) {
+    var left = cursors.left.isDown ? 1 : 0;
+    var right = cursors.right.isDown ? 1 : 0;
+    var up = cursors.up.isDown ? 1 : 0;
+    var down = cursors.down.isDown ? 1 : 0;
+
+    JX = player.x;
+    JY = player.y;
+
+    trainingData.push({
+        'input': [dx, dy, distance, JX, JY],
+        'output': [left, right, up, down, player.x, player.y]
+    });
+
+    console.log(
+        "Diferencia de la posicion de la bola contra la del jugador en X: ", dx + "\n" +
+        "Diferencia de la posicion de la bola contra la del jugador en Y: ", dy + "\n" +
+        "Distancia euclidiana entre la bola y el jugador: ", distance + "\n" +
+        "Posicion del jugador en X: ", JX + "\n" +
+        "Posicion del jugador en Y: ", JY + "\n"
+    );
+    console.log(
+        "Izquierda: ", left + "\n" +
+        "Derecha: ", right + "\n" +
+        "Arriba: ", up + "\n" +
+        "Abajo: ", down + "\n"
+    );
+}
+
+// Reproduce el movimiento del jugador en modo automático
+function replayPlayerInput() {
+    if (stepIndex < trainingData.length) {
+        var currentStep = trainingData[stepIndex];
+        var output = currentStep.output;
+
+        player.body.velocity.x = 0;
+        player.body.velocity.y = 0;
+
+        if (output[0] === 1) {
+            player.body.velocity.x = -PLAYER_SPEED;
+        } else if (output[1] === 1) {
+            player.body.velocity.x = PLAYER_SPEED;
         }
-    }
-    if (modoAuto == false && avanza.isDown && jugador.body.onFloor()) {
-        correr();
-    }
-    if (modoAuto == false && jugador.body.onFloor() && jugador.position.x >= 100) {
-        correrAtras();
-    }
-    if (modoAuto == false && !avanza.isDown && jugador.body.onFloor() && jugador.position.x == 100) {
-        Detenerse();
-    }
-    // Control de movimiento del jugador en modo automático
-    if (modoAuto == true && bala.position.x > 0 && jugador.body.onFloor()) {
-        if (datosDeEntrenamiento([despBala, velocidadBala, despBala2, velocidadBala2])) {
-            if (jugador.body.velocity.x <= 0) {
-                jugador.body.velocity.x = 0;
-                saltar();
-                correr();
-            } else {
-                saltar();
-                Detenerse();
-            }
+
+        if (output[2] === 1) {
+            player.body.velocity.y = -PLAYER_SPEED;
+        } else if (output[3] === 1) {
+            player.body.velocity.y = PLAYER_SPEED;
         }
-        if (datosDeEntrenamiento([despBala, velocidadBala, despBala2, velocidadBala2])) {
-            correr();
-        } else if (jugador.body.onFloor() && jugador.position.x >= 250) {
-            Detenerse();
-            correrAtras();
-        }
-    }
-    // Disparo de balas
-    if (balaD == false) {
-        disparo();
-    }
-    if (balaD2 == false) {
-        disparo2();
-    }
-  
-    // Reinicio de balas fuera de pantalla
-    if (bala.position.x <= 0) {
-        resetVariables();
-    }
-    if (bala2.position.y >= 355) {
-        resetVariables2();
-    }
- 
-    // Recopilación de datos para entrenamiento en modo manual
-    if (modoAuto == false && bala.position.x > 0) {
-        datosEntrenamiento.push({
-            'input': [despBala, velocidadBala, despBala2, velocidadBala2],
-            'output': [estatusAire, estatuSuelo, estatusDerecha, estatusIzquierda]
-        });
+
+        // Avanza al siguiente paso
+        stepIndex++;
+    } else {
+        isAutoMode = false; // Detener el modo automático al finalizar los movimientos grabados
     }
 }
 
-function disparo() {
-    // Función para el disparo de la bala 1
-    velocidadBala = -1 * velocidadRandom(500, 600);
-    bala.body.velocity.y = 0;
-    bala.body.velocity.x = velocidadBala;
-    balaD = true;
-}
-
-function disparo2() {
-    // Función para el disparo de la bala 2
-    velocidadBala2 = -0.5 * velocidadRandom(5, 10);
-    bala2.body.velocity.y = 0;
-    balaD2 = true;
-}
-
-
-
-function colisionH() {
-    // Función para manejar la colisión horizontal
-    pausa();
-}
-
-function velocidadRandom(min, max) {
-    // Función para generar una velocidad aleatoria
-    return Math.floor(Math.random() * (max - min + 1)) + min;
+// Maneja la colisión entre la bola y el jugador
+function handleCollision() {
+    isAutoMode = true;
+    pauseGame();
 }
 
 function render() {
-    // Función de renderizado
-
-    
-    }
-    
+    // Renderiza el estado del juego o información adicional si es necesario
+}
